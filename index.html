@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Snake.io Smooth Control</title>
+<title>Snake.io Mobile Fixed</title>
 <style>
     :root {
         --primary: #00e676;
@@ -14,13 +14,15 @@
         --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
 
+    /* Base reset with touch-action none to prevent scroll on canvas, 
+       but we override this for interactive elements below */
     * { box-sizing: border-box; touch-action: none; user-select: none; -webkit-user-select: none; }
     
     body, html {
         margin: 0; padding: 0; width: 100%; height: 100%;
         background: var(--bg); overflow: hidden;
         font-family: var(--font); color: var(--text);
-        cursor: crosshair; /* Crosshair cursor for aiming */
+        cursor: crosshair;
     }
 
     /* Game Layer */
@@ -62,6 +64,12 @@
     h1 { margin: 0 0 20px 0; color: var(--primary); text-transform: uppercase; letter-spacing: 3px; font-size: 28px; }
     h2 { margin: 10px 0; font-size: 20px; }
 
+    /* Critical: Allow standard touch interaction on buttons/inputs */
+    button, input, select, .toggle {
+        touch-action: manipulation; 
+        pointer-events: auto;
+    }
+
     button {
         background: var(--primary); color: #000; border: none;
         padding: 12px 30px; font-size: 18px; font-weight: bold;
@@ -80,8 +88,6 @@
         padding-bottom: 10px;
     }
     
-    select, input[type="range"] { pointer-events: auto; }
-
     /* Toggle Switch */
     .toggle { position: relative; display: inline-block; width: 50px; height: 24px; }
     .toggle input { opacity: 0; width: 0; height: 0; }
@@ -96,7 +102,7 @@
     input:checked + .slider { background-color: var(--primary); }
     input:checked + .slider:before { transform: translateX(26px); }
 
-    .lang-toggle { font-size: 24px; cursor: pointer; padding: 5px; display: inline-block; margin-bottom: 15px; }
+    .lang-toggle { font-size: 24px; cursor: pointer; padding: 5px; display: inline-block; margin-bottom: 15px; touch-action: manipulation; }
     
     /* Control Hint Overlay for 2P */
     .split-line {
@@ -111,7 +117,6 @@
 <div id="game-container">
     <canvas id="gameCanvas"></canvas>
     
-    <!-- Visual Divider for 2 Player Mode -->
     <div id="split-line" class="split-line"></div>
 
     <!-- UI Overlay -->
@@ -250,96 +255,89 @@ class AudioManager {
 }
 
 /**
- * New Input Handler (Mouse & Touch Follower)
+ * Input Handler (Mouse & Touch Follower)
+ * Updated to properly handle UI clicks on Mobile
  */
 class InputHandler {
     constructor() {
-        // Angles calculated from screen center or touch position
         this.p1Angle = null; 
         this.p2Angle = null;
-        
-        // Keyboard state for P2 backup
         this.keys = {};
+
+        // Keyboard
         window.addEventListener('keydown', e => this.keys[e.code] = true);
         window.addEventListener('keyup', e => this.keys[e.code] = false);
 
-        // Mouse Movement (Mainly for P1)
+        // Mouse (PC)
         window.addEventListener('mousemove', e => {
             this.handleMouse(e.clientX, e.clientY);
         });
 
-        // Touch Movement
+        // Touch (Mobile)
         const container = document.getElementById('game-container');
+        // We attach listeners to the container to handle full screen game control
+        // PASSIVE: FALSE is crucial to allow preventDefault (for preventing scroll)
         container.addEventListener('touchstart', e => this.handleTouch(e), {passive: false});
         container.addEventListener('touchmove', e => this.handleTouch(e), {passive: false});
         container.addEventListener('touchend', e => this.handleTouch(e), {passive: false});
     }
 
     handleMouse(mx, my) {
-        // Center of viewport
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
-        // Angle from center to mouse
         this.p1Angle = Math.atan2(my - cy, mx - cx);
     }
 
     handleTouch(e) {
-        e.preventDefault();
+        // --- MOBILE UI FIX ---
+        // If the user touches a button, input, select, or inside a panel/modal,
+        // we must NOT preventDefault(). If we do, the 'click' event never fires.
+        if (e.target.tagName === 'BUTTON' || 
+            e.target.tagName === 'INPUT' || 
+            e.target.tagName === 'SELECT' || 
+            e.target.closest('.panel')) {
+            // Return early to let the browser handle the UI click naturally
+            // This ensures buttons like "PLAY" or "RESTART" work.
+            return;
+        }
+
+        // Only prevent scrolling if we are strictly interacting with the game canvas
+        if(e.cancelable) e.preventDefault();
+
+        // Game Steering Logic
         const mode = parseInt(document.getElementById('game-mode').value);
         const w = window.innerWidth;
         const h = window.innerHeight;
         const cx = w / 2;
         const cy = h / 2;
 
-        // Reset angles if no touches (optional, but Slither keeps going last direction)
-        // We calculate angle based on where the finger is relative to the center
-        
         for (let i = 0; i < e.touches.length; i++) {
             const t = e.touches[i];
-            
             if (mode === 1) {
-                // 1 Player: Any touch steers P1 relative to screen center
+                // 1 Player: steer relative to screen center
                 this.p1Angle = Math.atan2(t.clientY - cy, t.clientX - cx);
             } else {
-                // 2 Player: Split screen
+                // 2 Players: split screen
                 if (t.clientX < w / 2) {
-                    // Left side controls P1
-                    // Calculate angle relative to the center of the Left Half
-                    const leftCx = w / 4;
-                    this.p1Angle = Math.atan2(t.clientY - cy, t.clientX - leftCx);
+                    this.p1Angle = Math.atan2(t.clientY - cy, t.clientX - (w/4));
                 } else {
-                    // Right side controls P2
-                    // Calculate angle relative to the center of the Right Half
-                    const rightCx = (w * 3) / 4;
-                    this.p2Angle = Math.atan2(t.clientY - cy, t.clientX - rightCx);
+                    this.p2Angle = Math.atan2(t.clientY - cy, t.clientX - ((w*3)/4));
                 }
             }
         }
     }
 
-    getP1Angle() {
-        return this.p1Angle;
-    }
+    getP1Angle() { return this.p1Angle; }
 
     getP2Angle() {
-        // P2 can be controlled by Touch (Right side) or Arrow Keys/WASD
-        if (this.p2Angle !== null && this.checkTouchActive()) return this.p2Angle;
-        
-        // Fallback to keyboard
+        if (this.p2Angle !== null) return this.p2Angle;
         let dx = 0, dy = 0;
         if (this.keys['ArrowUp'] || this.keys['KeyW']) dy = -1;
         if (this.keys['ArrowDown'] || this.keys['KeyS']) dy = 1;
         if (this.keys['ArrowLeft'] || this.keys['KeyA']) dx = -1;
         if (this.keys['ArrowRight'] || this.keys['KeyD']) dx = 1;
-        
         if (dx !== 0 || dy !== 0) return Math.atan2(dy, dx);
-        return null; // Keep previous angle
-    }
-
-    checkTouchActive() {
-        // Simple check if touch events recently fired could be added here
-        // For now, we assume if p2Angle is set by touch, we use it.
-        return true; 
+        return null; 
     }
 }
 
@@ -368,62 +366,52 @@ class Snake {
     update(dt, worldW, worldH, foodList, snakeList, input, diff) {
         if (this.dead) return;
 
-        // --- CONTROLS ---
+        // Steering
         let targetAngle = this.angle;
 
         if (!this.isBot) {
             let inputAngle = null;
             if (this.id === 'p1') inputAngle = input.getP1Angle();
             else if (this.id === 'p2') inputAngle = input.getP2Angle();
-
             if (inputAngle !== null) targetAngle = inputAngle;
         } else {
             targetAngle = this.runAI(foodList, snakeList, worldW, worldH, diff);
         }
 
-        // --- PHYSICS (Smooth Turn) ---
-        // Lerp angle
+        // Smooth Turn
         let diffAngle = targetAngle - this.angle;
         while (diffAngle <= -Math.PI) diffAngle += Math.PI * 2;
         while (diffAngle > Math.PI) diffAngle -= Math.PI * 2;
-        
-        // Turn speed
-        const turnSpeed = 0.12;
-        this.angle += diffAngle * turnSpeed;
+        this.angle += diffAngle * 0.12;
 
         // Move
         this.x += Math.cos(this.angle) * this.speed;
         this.y += Math.sin(this.angle) * this.speed;
 
-        // Bounds (Wrap or Die? Let's Die for challenge)
+        // Die on Boundary
         if (this.x < 0 || this.x > worldW || this.y < 0 || this.y > worldH) {
             this.dead = true;
         }
 
-        // Record Path
+        // Body Path
         this.path.unshift({x: this.x, y: this.y});
-        
-        // Size & Length
         const targetLen = 20 + (this.score * 4);
-        while (this.path.length > targetLen) {
-            this.path.pop();
-        }
+        while (this.path.length > targetLen) this.path.pop();
         
-        // Grow radius very slowly
+        // Growth limit
         this.radius = 12 + Math.sqrt(this.score) * 0.5;
-        // Limit max size
         if(this.radius > 40) this.radius = 40;
     }
 
     runAI(foods, snakes, w, h, diff) {
         const vision = (diff === 'hard') ? 350 : (diff === 'medium' ? 250 : 150);
-        let tx = Math.cos(this.angle) * 50; // default momentum
+        let tx = Math.cos(this.angle) * 50; 
         let ty = Math.sin(this.angle) * 50;
 
-        // 1. Find Food
+        // Food
         let bestFood = null;
         let minDist = Infinity;
-        for(let i=0; i<30; i++) { // Sample random foods to save CPU
+        for(let i=0; i<30; i++) {
             const f = foods[Math.floor(Math.random() * foods.length)];
             if(!f) continue;
             const d = Math.hypot(f.x - this.x, f.y - this.y);
@@ -434,25 +422,23 @@ class Snake {
             ty = bestFood.y - this.y;
         }
 
-        // 2. Avoid Walls
+        // Wall Avoid
         const wallDist = 100;
         if(this.x < wallDist) tx += 200;
         if(this.x > w - wallDist) tx -= 200;
         if(this.y < wallDist) ty += 200;
         if(this.y > h - wallDist) ty -= 200;
 
-        // 3. Avoid Snakes (Critical)
+        // Snake Avoid
         if(diff !== 'easy') {
             snakes.forEach(s => {
                 if(s === this || s.dead) return;
-                // Avoid heads and bodies
-                // Simply check nearest point on path
                 for(let k=0; k<s.path.length; k+=5) {
                     const p = s.path[k];
                     const dist = Math.hypot(p.x - this.x, p.y - this.y);
                     if(dist < vision / 2) {
                         const a = Math.atan2(p.y - this.y, p.x - this.x);
-                        tx -= Math.cos(a) * 500; // Strong repulsion
+                        tx -= Math.cos(a) * 500; 
                         ty -= Math.sin(a) * 500;
                     }
                 }
@@ -465,12 +451,10 @@ class Snake {
     draw(ctx) {
         if (this.dead) return;
         
-        // Draw Body
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         ctx.beginPath();
         
-        // Draw using quadratic curves for smoothness
         const stride = Math.max(1, Math.floor(this.radius/3));
         if (this.path.length > 0) {
             ctx.moveTo(this.path[0].x, this.path[0].y);
@@ -486,7 +470,7 @@ class Snake {
         ctx.stroke();
         ctx.shadowBlur = 0;
 
-        // Head Logic
+        // Head
         const headX = this.x;
         const headY = this.y;
 
@@ -503,7 +487,7 @@ class Snake {
 
         // Pupils
         ctx.fillStyle = '#000';
-        const pLook = 2; // Look forward
+        const pLook = 2;
         ctx.beginPath(); 
         ctx.arc(headX + eyeOffX + Math.cos(this.angle)*pLook, headY + eyeOffY + Math.sin(this.angle)*pLook, eyeSize/2, 0, Math.PI*2); 
         ctx.fill();
@@ -526,11 +510,9 @@ class Food {
         this.radius = 5 + Math.random() * 5;
         this.color = `hsl(${Math.floor(Math.random()*360)}, 100%, 60%)`;
         this.val = Math.floor(this.radius / 2);
-        // Oscillation
         this.offset = Math.random() * Math.PI;
     }
     draw(ctx, time) {
-        // Breathe effect
         const s = 1 + Math.sin(time * 0.005 + this.offset) * 0.1;
         ctx.beginPath();
         ctx.arc(this.x, this.y, this.radius * s, 0, Math.PI * 2);
@@ -591,7 +573,7 @@ class Game {
     resize() {
         this.W = window.innerWidth;
         this.H = window.innerHeight;
-        this.canvas.width = this.W; // Native res for performance
+        this.canvas.width = this.W;
         this.canvas.height = this.H;
     }
 
@@ -674,15 +656,11 @@ class Game {
                 let s2 = this.snakes[j];
                 if (s1 === s2 || s2.dead) continue;
 
-                // Head to Body check
-                // Optimization: Check bounding box first or distance to center
-                // Detailed check
                 let collision = false;
-                // Only check every few points to save CPU
                 for (let k = 0; k < s2.path.length; k+=2) {
                     const p = s2.path[k];
                     const distSq = (s1.x - p.x)**2 + (s1.y - p.y)**2;
-                    const combinedR = s1.radius + s2.radius - 2; // slight grace overlap
+                    const combinedR = s1.radius + s2.radius - 2; 
                     if (distSq < combinedR*combinedR) {
                         collision = true;
                         break;
@@ -705,10 +683,8 @@ class Game {
             if (p1 && p1.dead && p2 && p2.dead) setTimeout(()=>this.gameOver(), 500);
         }
 
-        // Replenish Bots
         if(this.snakes.filter(s => s.isBot && !s.dead).length < this.config.bots) this.spawnBot();
 
-        // UI Scores
         if(p1) document.getElementById('score-p1').innerText = (this.lang=='en'?"P1: ":"পি১: ") + p1.score;
         if(p2) document.getElementById('score-p2').innerText = (this.lang=='en'?"P2: ":"পি২: ") + p2.score;
         this.updateLeaderboard();
@@ -721,8 +697,7 @@ class Game {
             if(this.config.vibrate && navigator.vibrate) navigator.vibrate([200, 100, 200]);
         }
         
-        // Spawn Food from body
-        const dropRate = 2; // Drop every 2nd segment
+        const dropRate = 2; 
         for(let i=0; i<snake.path.length; i+=dropRate) {
              const p = snake.path[i];
              const f = new Food(this.worldW, this.worldH);
@@ -735,13 +710,11 @@ class Game {
     }
 
     draw(time) {
-        // Clear
         this.ctx.fillStyle = '#101010';
         this.ctx.fillRect(0, 0, this.W, this.H);
         
         this.ctx.save();
         
-        // CAMERA LOGIC
         let camX = this.worldW/2, camY = this.worldH/2;
         const p1 = this.snakes.find(s => s.id === 'p1');
         const p2 = this.snakes.find(s => s.id === 'p2');
@@ -749,18 +722,15 @@ class Game {
         if (this.config.mode === 1 && p1 && !p1.dead) {
             camX = p1.x; camY = p1.y;
         } else if (this.config.mode === 2) {
-             // Calculate center between alive players
              let targets = [];
              if(p1 && !p1.dead) targets.push(p1);
              if(p2 && !p2.dead) targets.push(p2);
-             
              if(targets.length > 0) {
                  camX = targets.reduce((sum, t) => sum + t.x, 0) / targets.length;
                  camY = targets.reduce((sum, t) => sum + t.y, 0) / targets.length;
              }
         }
         
-        // Interpolate camera for smoothness (optional, strict follow for responsiveness)
         const tx = this.W/2 - camX;
         const ty = this.H/2 - camY;
         this.ctx.translate(tx, ty);
@@ -770,7 +740,6 @@ class Game {
         this.ctx.lineWidth = 2;
         this.ctx.beginPath();
         const gs = 60;
-        // Optimization: Draw only visible grid
         const startX = Math.floor(-tx / gs) * gs;
         const endX = startX + this.W + gs;
         const startY = Math.floor(-ty / gs) * gs;
@@ -784,21 +753,16 @@ class Game {
         }
         this.ctx.stroke();
 
-        // BOUNDARY
         this.ctx.strokeStyle = '#FF3333';
         this.ctx.lineWidth = 5;
         this.ctx.strokeRect(0,0,this.worldW, this.worldH);
 
-        // FOOD
         this.foods.forEach(f => {
-            // Simple culling
             if(f.x > -tx-20 && f.x < -tx+this.W+20 && f.y > -ty-20 && f.y < -ty+this.H+20) {
                 f.draw(this.ctx, time);
             }
         });
 
-        // SNAKES (Draw dead ones? No, they vanish)
-        // Sort: Lower score bottom (usually smaller)
         const sorted = [...this.snakes].sort((a,b)=>a.score - b.score);
         sorted.forEach(s => s.draw(this.ctx));
 
