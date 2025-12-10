@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Snake.io Smooth Control</title>
+<style>
+    :root {
+        --primary: #00e676;
+        --accent: #2979ff;
+        --bg: #101010;
+        --panel: rgba(0, 0, 0, 0.85);
+        --text: #ffffff;
+        --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; touch-action: none; user-select: none; -webkit-user-select: none; }
+    
+    body, html {
+        margin: 0; padding: 0; width: 100%; height: 100%;
+        background: var(--bg); overflow: hidden;
+        font-family: var(--font); color: var(--text);
+        cursor: crosshair; /* Crosshair cursor for aiming */
+    }
+
+    /* Game Layer */
+    #game-container { position: relative; width: 100%; height: 100%; }
+    canvas { display: block; width: 100%; height: 100%; }
+
+    /* UI Overlay */
+    #ui-layer {
+        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        pointer-events: none; display: flex; flex-direction: column;
+        justify-content: space-between; padding: 10px;
+    }
+
+    /* HUD */
+    .hud-top { display: flex; justify-content: space-between; width: 100%; pointer-events: auto; }
+    .score-board { background: rgba(0,0,0,0.5); padding: 8px 15px; border-radius: 20px; font-weight: bold; font-size: 16px; }
+    .leaderboard { 
+        background: rgba(0,0,0,0.5); padding: 10px; border-radius: 10px; 
+        font-size: 12px; max-width: 150px; text-align: right;
+        margin-top: 10px;
+    }
+
+    /* Modals */
+    .modal {
+        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.85); backdrop-filter: blur(5px);
+        display: flex; justify-content: center; align-items: center;
+        pointer-events: auto; z-index: 100;
+        transition: opacity 0.3s;
+    }
+    .modal.hidden { opacity: 0; pointer-events: none; }
+    
+    .panel {
+        background: var(--panel); border: 2px solid var(--primary);
+        padding: 25px; border-radius: 15px; width: 90%; max-width: 400px;
+        text-align: center; box-shadow: 0 0 30px rgba(0, 230, 118, 0.3);
+    }
+
+    h1 { margin: 0 0 20px 0; color: var(--primary); text-transform: uppercase; letter-spacing: 3px; font-size: 28px; }
+    h2 { margin: 10px 0; font-size: 20px; }
+
+    button {
+        background: var(--primary); color: #000; border: none;
+        padding: 12px 30px; font-size: 18px; font-weight: bold;
+        border-radius: 30px; cursor: pointer; margin: 10px;
+        transition: transform 0.1s, background 0.2s;
+        min-width: 120px;
+    }
+    button:active { transform: scale(0.95); }
+    button:hover { background: #69f0ae; }
+    button.secondary { background: transparent; border: 2px solid #fff; color: #fff; }
+    button.secondary:hover { background: rgba(255,255,255,0.1); }
+
+    .setting-row {
+        display: flex; justify-content: space-between; align-items: center;
+        margin: 15px 0; font-size: 16px; border-bottom: 1px solid rgba(255,255,255,0.1);
+        padding-bottom: 10px;
+    }
+    
+    select, input[type="range"] { pointer-events: auto; }
+
+    /* Toggle Switch */
+    .toggle { position: relative; display: inline-block; width: 50px; height: 24px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .slider {
+        position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+        background-color: #555; transition: .4s; border-radius: 24px;
+    }
+    .slider:before {
+        position: absolute; content: ""; height: 18px; width: 18px;
+        left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%;
+    }
+    input:checked + .slider { background-color: var(--primary); }
+    input:checked + .slider:before { transform: translateX(26px); }
+
+    .lang-toggle { font-size: 24px; cursor: pointer; padding: 5px; display: inline-block; margin-bottom: 15px; }
+    
+    /* Control Hint Overlay for 2P */
+    .split-line {
+        position: absolute; left: 50%; top: 0; bottom: 0; width: 2px;
+        background: rgba(255,255,255,0.2); border-left: 2px dashed rgba(0,0,0,0.5);
+        display: none; pointer-events: none;
+    }
+</style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    
+    <!-- Visual Divider for 2 Player Mode -->
+    <div id="split-line" class="split-line"></div>
+
+    <!-- UI Overlay -->
+    <div id="ui-layer">
+        <div class="hud-top">
+            <div class="score-board">
+                <span id="score-p1" style="color:var(--primary)">P1: 0</span>
+                <span id="score-p2" style="color:var(--accent); display:none; margin-left:15px; border-left:1px solid #fff; padding-left:15px;">P2: 0</span>
+            </div>
+            <div class="leaderboard" id="leaderboard"></div>
+        </div>
+    </div>
+
+    <!-- Main Menu Modal -->
+    <div id="menu-modal" class="modal">
+        <div class="panel">
+            <h1>Snake.IO</h1>
+            <div onclick="game.toggleLang()" class="lang-toggle" id="btn-lang">🇺🇸 / 🇧🇩</div>
+            
+            <div class="setting-row">
+                <span data-t="mode">Mode</span>
+                <select id="game-mode" style="padding:5px; border-radius:5px;">
+                    <option value="1">1 Player</option>
+                    <option value="2">2 Players (Split)</option>
+                </select>
+            </div>
+
+            <div class="setting-row">
+                <span data-t="bots">Bots</span>
+                <input type="range" id="bot-count" min="0" max="50" value="15" oninput="document.getElementById('bot-val').innerText=this.value">
+                <span id="bot-val" style="width:25px; text-align:right;">15</span>
+            </div>
+
+            <div class="setting-row">
+                <span data-t="difficulty">Difficulty</span>
+                <select id="bot-diff" style="padding:5px; border-radius:5px;">
+                    <option value="easy">Easy</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="hard">Hard</option>
+                </select>
+            </div>
+
+            <button onclick="game.start()" data-t="play">PLAY</button>
+            <br>
+            <button class="secondary" onclick="game.openSettings()" data-t="settings">SETTINGS</button>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal hidden">
+        <div class="panel">
+            <h2 data-t="settings">Settings</h2>
+            
+            <div class="setting-row">
+                <span data-t="sound">Sound</span>
+                <label class="toggle">
+                    <input type="checkbox" id="opt-sound" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+            
+            <div class="setting-row">
+                <span data-t="vibration">Vibration</span>
+                <label class="toggle">
+                    <input type="checkbox" id="opt-vibrate" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <button class="secondary" onclick="game.closeSettings()" data-t="back">BACK</button>
+            <p style="font-size:12px; opacity:0.7; margin-top:20px;" data-t="controls">
+                Controls: Move Mouse or Touch Screen to steer.
+            </p>
+        </div>
+    </div>
+
+    <!-- Game Over Modal -->
+    <div id="gameover-modal" class="modal hidden">
+        <div class="panel">
+            <h1 data-t="gameover">GAME OVER</h1>
+            <h2 id="final-score">Score: 0</h2>
+            <button onclick="game.menu()" data-t="menu">MENU</button>
+            <button onclick="game.restart()" data-t="restart">RESTART</button>
+        </div>
+    </div>
+</div>
+
+<script>
+/**
+ * Localization Data
+ */
+const LOCALE = {
+    en: {
+        play: "PLAY", settings: "SETTINGS", back: "BACK",
+        mode: "Players", bots: "Bots", difficulty: "Difficulty",
+        sound: "Sound", vibration: "Vibration",
+        gameover: "GAME OVER", menu: "MENU", restart: "RESTART",
+        controls: "Controls: Mouse/Touch to steer. P2 uses Arrow Keys or Right Side Touch."
+    },
+    bn: {
+        play: "খেলুন", settings: "সেটিংস", back: "ফিরে যান",
+        mode: "খেলোয়াড়", bots: "বট", difficulty: "কঠিনতা",
+        sound: "শব্দ", vibration: "কম্পন",
+        gameover: "খেলা শেষ", menu: "মেনু", restart: "পুনরায় খেলুন",
+        controls: "কন্ট্রোল: মাউস/টাচ দিয়ে দিক পরিবর্তন করুন।"
+    }
+};
+
+/**
+ * Audio Manager
+ */
+class AudioManager {
+    constructor() {
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        this.enabled = true;
+    }
+    
+    playTone(freq, type, duration, vol=0.1) {
+        if (!this.enabled) return;
+        if (this.ctx.state === 'suspended') this.ctx.resume();
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+        gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(this.ctx.currentTime + duration);
+    }
+
+    playEat() { this.playTone(400 + Math.random()*200, 'sine', 0.1, 0.03); }
+    playDie() { this.playTone(100, 'sawtooth', 0.6, 0.08); }
+    playClick() { this.playTone(800, 'triangle', 0.05, 0.05); }
+}
+
+/**
+ * New Input Handler (Mouse & Touch Follower)
+ */
+class InputHandler {
+    constructor() {
+        // Angles calculated from screen center or touch position
+        this.p1Angle = null; 
+        this.p2Angle = null;
+        
+        // Keyboard state for P2 backup
+        this.keys = {};
+        window.addEventListener('keydown', e => this.keys[e.code] = true);
+        window.addEventListener('keyup', e => this.keys[e.code] = false);
+
+        // Mouse Movement (Mainly for P1)
+        window.addEventListener('mousemove', e => {
+            this.handleMouse(e.clientX, e.clientY);
+        });
+
+        // Touch Movement
+        const container = document.getElementById('game-container');
+        container.addEventListener('touchstart', e => this.handleTouch(e), {passive: false});
+        container.addEventListener('touchmove', e => this.handleTouch(e), {passive: false});
+        container.addEventListener('touchend', e => this.handleTouch(e), {passive: false});
+    }
+
+    handleMouse(mx, my) {
+        // Center of viewport
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        // Angle from center to mouse
+        this.p1Angle = Math.atan2(my - cy, mx - cx);
+    }
+
+    handleTouch(e) {
+        e.preventDefault();
+        const mode = parseInt(document.getElementById('game-mode').value);
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const cx = w / 2;
+        const cy = h / 2;
+
+        // Reset angles if no touches (optional, but Slither keeps going last direction)
+        // We calculate angle based on where the finger is relative to the center
+        
+        for (let i = 0; i < e.touches.length; i++) {
+            const t = e.touches[i];
+            
+            if (mode === 1) {
+                // 1 Player: Any touch steers P1 relative to screen center
+                this.p1Angle = Math.atan2(t.clientY - cy, t.clientX - cx);
+            } else {
+                // 2 Player: Split screen
+                if (t.clientX < w / 2) {
+                    // Left side controls P1
+                    // Calculate angle relative to the center of the Left Half
+                    const leftCx = w / 4;
+                    this.p1Angle = Math.atan2(t.clientY - cy, t.clientX - leftCx);
+                } else {
+                    // Right side controls P2
+                    // Calculate angle relative to the center of the Right Half
+                    const rightCx = (w * 3) / 4;
+                    this.p2Angle = Math.atan2(t.clientY - cy, t.clientX - rightCx);
+                }
+            }
+        }
+    }
+
+    getP1Angle() {
+        return this.p1Angle;
+    }
+
+    getP2Angle() {
+        // P2 can be controlled by Touch (Right side) or Arrow Keys/WASD
+        if (this.p2Angle !== null && this.checkTouchActive()) return this.p2Angle;
+        
+        // Fallback to keyboard
+        let dx = 0, dy = 0;
+        if (this.keys['ArrowUp'] || this.keys['KeyW']) dy = -1;
+        if (this.keys['ArrowDown'] || this.keys['KeyS']) dy = 1;
+        if (this.keys['ArrowLeft'] || this.keys['KeyA']) dx = -1;
+        if (this.keys['ArrowRight'] || this.keys['KeyD']) dx = 1;
+        
+        if (dx !== 0 || dy !== 0) return Math.atan2(dy, dx);
+        return null; // Keep previous angle
+    }
+
+    checkTouchActive() {
+        // Simple check if touch events recently fired could be added here
+        // For now, we assume if p2Angle is set by touch, we use it.
+        return true; 
+    }
+}
+
+/**
+ * Game Entities
+ */
+class Snake {
+    constructor(id, x, y, color, isBot = true, name = "Bot") {
+        this.id = id;
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.isBot = isBot;
+        this.name = name;
+        this.angle = Math.random() * Math.PI * 2;
+        this.speed = 3.5; 
+        this.radius = 12;
+        this.score = 0;
+        this.dead = false;
+        
+        this.path = []; 
+        this.pathLength = 20;
+        for(let i=0; i<this.pathLength; i++) this.path.push({x, y});
+    }
+
+    update(dt, worldW, worldH, foodList, snakeList, input, diff) {
+        if (this.dead) return;
+
+        // --- CONTROLS ---
+        let targetAngle = this.angle;
+
+        if (!this.isBot) {
+            let inputAngle = null;
+            if (this.id === 'p1') inputAngle = input.getP1Angle();
+            else if (this.id === 'p2') inputAngle = input.getP2Angle();
+
+            if (inputAngle !== null) targetAngle = inputAngle;
+        } else {
+            targetAngle = this.runAI(foodList, snakeList, worldW, worldH, diff);
+        }
+
+        // --- PHYSICS (Smooth Turn) ---
+        // Lerp angle
+        let diffAngle = targetAngle - this.angle;
+        while (diffAngle <= -Math.PI) diffAngle += Math.PI * 2;
+        while (diffAngle > Math.PI) diffAngle -= Math.PI * 2;
+        
+        // Turn speed
+        const turnSpeed = 0.12;
+        this.angle += diffAngle * turnSpeed;
+
+        // Move
+        this.x += Math.cos(this.angle) * this.speed;
+        this.y += Math.sin(this.angle) * this.speed;
+
+        // Bounds (Wrap or Die? Let's Die for challenge)
+        if (this.x < 0 || this.x > worldW || this.y < 0 || this.y > worldH) {
+            this.dead = true;
+        }
+
+        // Record Path
+        this.path.unshift({x: this.x, y: this.y});
+        
+        // Size & Length
+        const targetLen = 20 + (this.score * 4);
+        while (this.path.length > targetLen) {
+            this.path.pop();
+        }
+        
+        // Grow radius very slowly
+        this.radius = 12 + Math.sqrt(this.score) * 0.5;
+        // Limit max size
+        if(this.radius > 40) this.radius = 40;
+    }
+
+    runAI(foods, snakes, w, h, diff) {
+        const vision = (diff === 'hard') ? 350 : (diff === 'medium' ? 250 : 150);
+        let tx = Math.cos(this.angle) * 50; // default momentum
+        let ty = Math.sin(this.angle) * 50;
+
+        // 1. Find Food
+        let bestFood = null;
+        let minDist = Infinity;
+        for(let i=0; i<30; i++) { // Sample random foods to save CPU
+            const f = foods[Math.floor(Math.random() * foods.length)];
+            if(!f) continue;
+            const d = Math.hypot(f.x - this.x, f.y - this.y);
+            if(d < vision && d < minDist) { minDist = d; bestFood = f; }
+        }
+        if(bestFood) {
+            tx = bestFood.x - this.x;
+            ty = bestFood.y - this.y;
+        }
+
+        // 2. Avoid Walls
+        const wallDist = 100;
+        if(this.x < wallDist) tx += 200;
+        if(this.x > w - wallDist) tx -= 200;
+        if(this.y < wallDist) ty += 200;
+        if(this.y > h - wallDist) ty -= 200;
+
+        // 3. Avoid Snakes (Critical)
+        if(diff !== 'easy') {
+            snakes.forEach(s => {
+                if(s === this || s.dead) return;
+                // Avoid heads and bodies
+                // Simply check nearest point on path
+                for(let k=0; k<s.path.length; k+=5) {
+                    const p = s.path[k];
+                    const dist = Math.hypot(p.x - this.x, p.y - this.y);
+                    if(dist < vision / 2) {
+                        const a = Math.atan2(p.y - this.y, p.x - this.x);
+                        tx -= Math.cos(a) * 500; // Strong repulsion
+                        ty -= Math.sin(a) * 500;
+                    }
+                }
+            });
+        }
+
+        return Math.atan2(ty, tx);
+    }
+
+    draw(ctx) {
+        if (this.dead) return;
+        
+        // Draw Body
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        
+        // Draw using quadratic curves for smoothness
+        const stride = Math.max(1, Math.floor(this.radius/3));
+        if (this.path.length > 0) {
+            ctx.moveTo(this.path[0].x, this.path[0].y);
+            for (let i = stride; i < this.path.length; i+=stride) {
+                ctx.lineTo(this.path[i].x, this.path[i].y);
+            }
+        }
+
+        ctx.lineWidth = this.radius * 2;
+        ctx.strokeStyle = this.color;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = this.color;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Head Logic
+        const headX = this.x;
+        const headY = this.y;
+
+        // Eyes
+        ctx.fillStyle = '#fff';
+        const eyeOffX = Math.cos(this.angle - 0.7) * (this.radius * 0.6);
+        const eyeOffY = Math.sin(this.angle - 0.7) * (this.radius * 0.6);
+        const eyeOffX2 = Math.cos(this.angle + 0.7) * (this.radius * 0.6);
+        const eyeOffY2 = Math.sin(this.angle + 0.7) * (this.radius * 0.6);
+        const eyeSize = this.radius * 0.35;
+
+        ctx.beginPath(); ctx.arc(headX + eyeOffX, headY + eyeOffY, eyeSize, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(headX + eyeOffX2, headY + eyeOffY2, eyeSize, 0, Math.PI*2); ctx.fill();
+
+        // Pupils
+        ctx.fillStyle = '#000';
+        const pLook = 2; // Look forward
+        ctx.beginPath(); 
+        ctx.arc(headX + eyeOffX + Math.cos(this.angle)*pLook, headY + eyeOffY + Math.sin(this.angle)*pLook, eyeSize/2, 0, Math.PI*2); 
+        ctx.fill();
+        ctx.beginPath(); 
+        ctx.arc(headX + eyeOffX2 + Math.cos(this.angle)*pLook, headY + eyeOffY2 + Math.sin(this.angle)*pLook, eyeSize/2, 0, Math.PI*2); 
+        ctx.fill();
+
+        // Name
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(this.name, headX, headY - this.radius - 8);
+    }
+}
+
+class Food {
+    constructor(w, h) {
+        this.x = Math.random() * w;
+        this.y = Math.random() * h;
+        this.radius = 5 + Math.random() * 5;
+        this.color = `hsl(${Math.floor(Math.random()*360)}, 100%, 60%)`;
+        this.val = Math.floor(this.radius / 2);
+        // Oscillation
+        this.offset = Math.random() * Math.PI;
+    }
+    draw(ctx, time) {
+        // Breathe effect
+        const s = 1 + Math.sin(time * 0.005 + this.offset) * 0.1;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius * s, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = this.color;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+    }
+}
+
+/**
+ * Main Game Class
+ */
+class Game {
+    constructor() {
+        this.canvas = document.getElementById('gameCanvas');
+        this.ctx = this.canvas.getContext('2d', {alpha: false});
+        this.input = new InputHandler();
+        this.audio = new AudioManager();
+        
+        this.state = 'menu'; 
+        this.lang = 'en';
+
+        this.worldW = 3000;
+        this.worldH = 3000;
+        
+        this.snakes = [];
+        this.foods = [];
+
+        this.config = {
+            mode: 1, 
+            bots: 10,
+            diff: 'medium',
+            sound: true,
+            vibrate: true
+        };
+
+        this.loadSettings();
+        this.resize();
+        window.addEventListener('resize', () => this.resize());
+
+        // Setup Options UI
+        document.getElementById('opt-sound').addEventListener('change', (e) => {
+            this.config.sound = e.target.checked;
+            this.audio.enabled = this.config.sound;
+            this.saveSettings();
+        });
+        document.getElementById('opt-vibrate').addEventListener('change', (e) => {
+            this.config.vibrate = e.target.checked;
+            this.saveSettings();
+        });
+
+        requestAnimationFrame(t => this.loop(t));
+        this.translateUI();
+    }
+
+    resize() {
+        this.W = window.innerWidth;
+        this.H = window.innerHeight;
+        this.canvas.width = this.W; // Native res for performance
+        this.canvas.height = this.H;
+    }
+
+    start() {
+        this.config.mode = parseInt(document.getElementById('game-mode').value);
+        this.config.bots = parseInt(document.getElementById('bot-count').value);
+        this.config.diff = document.getElementById('bot-diff').value;
+        this.audio.playClick();
+        
+        // Reset
+        this.snakes = [];
+        this.foods = [];
+        
+        // Add Players
+        this.snakes.push(new Snake('p1', this.worldW/2, this.worldH/2, '#00e676', false, "YOU"));
+        
+        const splitLine = document.getElementById('split-line');
+        const scoreP2 = document.getElementById('score-p2');
+
+        if (this.config.mode === 2) {
+            this.snakes.push(new Snake('p2', this.worldW/2 + 100, this.worldH/2, '#2979ff', false, "P2"));
+            splitLine.style.display = 'block';
+            scoreP2.style.display = 'inline';
+        } else {
+            splitLine.style.display = 'none';
+            scoreP2.style.display = 'none';
+        }
+
+        // Add Bots
+        for(let i=0; i<this.config.bots; i++) this.spawnBot();
+
+        // Add Food
+        for(let i=0; i<400; i++) this.foods.push(new Food(this.worldW, this.worldH));
+
+        document.getElementById('menu-modal').classList.add('hidden');
+        document.getElementById('gameover-modal').classList.add('hidden');
+        document.getElementById('ui-layer').style.opacity = 1;
+        
+        this.state = 'playing';
+    }
+
+    spawnBot() {
+        const x = Math.random() * this.worldW;
+        const y = Math.random() * this.worldH;
+        const color = `hsl(${Math.random()*360}, 70%, 50%)`;
+        this.snakes.push(new Snake('bot'+Math.random(), x, y, color, true, "Bot"));
+    }
+
+    update(dt, time) {
+        if (this.state !== 'playing') return;
+
+        this.snakes.forEach(s => s.update(dt, this.worldW, this.worldH, this.foods, this.snakes, this.input, this.config.diff));
+
+        // Collisions: Snake vs Food
+        this.snakes.forEach(s => {
+            if(s.dead) return;
+            for(let i = this.foods.length-1; i>=0; i--) {
+                const f = this.foods[i];
+                const dx = s.x - f.x;
+                const dy = s.y - f.y;
+                if (dx*dx + dy*dy < (s.radius + f.radius)*(s.radius + f.radius)) {
+                    s.score += f.val;
+                    this.foods.splice(i, 1);
+                    this.foods.push(new Food(this.worldW, this.worldH));
+                    
+                    if(!s.isBot) {
+                        this.audio.playEat();
+                        if(this.config.vibrate && navigator.vibrate) navigator.vibrate(5);
+                    }
+                }
+            }
+        });
+
+        // Collisions: Snake vs Snake
+        for (let i = 0; i < this.snakes.length; i++) {
+            let s1 = this.snakes[i];
+            if (s1.dead) continue;
+
+            for (let j = 0; j < this.snakes.length; j++) {
+                let s2 = this.snakes[j];
+                if (s1 === s2 || s2.dead) continue;
+
+                // Head to Body check
+                // Optimization: Check bounding box first or distance to center
+                // Detailed check
+                let collision = false;
+                // Only check every few points to save CPU
+                for (let k = 0; k < s2.path.length; k+=2) {
+                    const p = s2.path[k];
+                    const distSq = (s1.x - p.x)**2 + (s1.y - p.y)**2;
+                    const combinedR = s1.radius + s2.radius - 2; // slight grace overlap
+                    if (distSq < combinedR*combinedR) {
+                        collision = true;
+                        break;
+                    }
+                }
+
+                if (collision) {
+                    this.killSnake(s1);
+                }
+            }
+        }
+
+        // Check End Game
+        const p1 = this.snakes.find(s => s.id === 'p1');
+        const p2 = this.snakes.find(s => s.id === 'p2');
+        
+        if (this.config.mode === 1) {
+            if (p1 && p1.dead) setTimeout(()=>this.gameOver(), 500);
+        } else {
+            if (p1 && p1.dead && p2 && p2.dead) setTimeout(()=>this.gameOver(), 500);
+        }
+
+        // Replenish Bots
+        if(this.snakes.filter(s => s.isBot && !s.dead).length < this.config.bots) this.spawnBot();
+
+        // UI Scores
+        if(p1) document.getElementById('score-p1').innerText = (this.lang=='en'?"P1: ":"পি১: ") + p1.score;
+        if(p2) document.getElementById('score-p2').innerText = (this.lang=='en'?"P2: ":"পি২: ") + p2.score;
+        this.updateLeaderboard();
+    }
+
+    killSnake(snake) {
+        snake.dead = true;
+        if(!snake.isBot) {
+            this.audio.playDie();
+            if(this.config.vibrate && navigator.vibrate) navigator.vibrate([200, 100, 200]);
+        }
+        
+        // Spawn Food from body
+        const dropRate = 2; // Drop every 2nd segment
+        for(let i=0; i<snake.path.length; i+=dropRate) {
+             const p = snake.path[i];
+             const f = new Food(this.worldW, this.worldH);
+             f.x = p.x + (Math.random()-0.5)*10; 
+             f.y = p.y + (Math.random()-0.5)*10;
+             f.radius = 6;
+             f.val = 3;
+             this.foods.push(f);
+        }
+    }
+
+    draw(time) {
+        // Clear
+        this.ctx.fillStyle = '#101010';
+        this.ctx.fillRect(0, 0, this.W, this.H);
+        
+        this.ctx.save();
+        
+        // CAMERA LOGIC
+        let camX = this.worldW/2, camY = this.worldH/2;
+        const p1 = this.snakes.find(s => s.id === 'p1');
+        const p2 = this.snakes.find(s => s.id === 'p2');
+        
+        if (this.config.mode === 1 && p1 && !p1.dead) {
+            camX = p1.x; camY = p1.y;
+        } else if (this.config.mode === 2) {
+             // Calculate center between alive players
+             let targets = [];
+             if(p1 && !p1.dead) targets.push(p1);
+             if(p2 && !p2.dead) targets.push(p2);
+             
+             if(targets.length > 0) {
+                 camX = targets.reduce((sum, t) => sum + t.x, 0) / targets.length;
+                 camY = targets.reduce((sum, t) => sum + t.y, 0) / targets.length;
+             }
+        }
+        
+        // Interpolate camera for smoothness (optional, strict follow for responsiveness)
+        const tx = this.W/2 - camX;
+        const ty = this.H/2 - camY;
+        this.ctx.translate(tx, ty);
+
+        // GRID
+        this.ctx.strokeStyle = '#1a1a1a';
+        this.ctx.lineWidth = 2;
+        this.ctx.beginPath();
+        const gs = 60;
+        // Optimization: Draw only visible grid
+        const startX = Math.floor(-tx / gs) * gs;
+        const endX = startX + this.W + gs;
+        const startY = Math.floor(-ty / gs) * gs;
+        const endY = startY + this.H + gs;
+
+        for (let x = startX; x < endX; x += gs) {
+            this.ctx.moveTo(x, startY); this.ctx.lineTo(x, endY);
+        }
+        for (let y = startY; y < endY; y += gs) {
+            this.ctx.moveTo(startX, y); this.ctx.lineTo(endX, y);
+        }
+        this.ctx.stroke();
+
+        // BOUNDARY
+        this.ctx.strokeStyle = '#FF3333';
+        this.ctx.lineWidth = 5;
+        this.ctx.strokeRect(0,0,this.worldW, this.worldH);
+
+        // FOOD
+        this.foods.forEach(f => {
+            // Simple culling
+            if(f.x > -tx-20 && f.x < -tx+this.W+20 && f.y > -ty-20 && f.y < -ty+this.H+20) {
+                f.draw(this.ctx, time);
+            }
+        });
+
+        // SNAKES (Draw dead ones? No, they vanish)
+        // Sort: Lower score bottom (usually smaller)
+        const sorted = [...this.snakes].sort((a,b)=>a.score - b.score);
+        sorted.forEach(s => s.draw(this.ctx));
+
+        this.ctx.restore();
+    }
+
+    loop(time) {
+        const dt = time - (this.lastTime || time);
+        this.lastTime = time;
+        this.update(dt, time);
+        this.draw(time);
+        requestAnimationFrame(t => this.loop(t));
+    }
+
+    updateLeaderboard() {
+        if(Math.random() > 0.05) return; 
+        const top = [...this.snakes].sort((a, b) => b.score - a.score).slice(0, 5);
+        document.getElementById('leaderboard').innerHTML = top.map((s, i) => 
+            `<div style="color:${s.color}">${i+1}. ${s.name}: ${s.score}</div>`
+        ).join('');
+    }
+
+    gameOver() {
+        if(this.state === 'gameover') return;
+        this.state = 'gameover';
+        const p1 = this.snakes.find(s=>s.id==='p1');
+        const p2 = this.snakes.find(s=>s.id==='p2');
+        let txt = "";
+        if(this.config.mode === 1) txt = (this.lang=='en'?"Score: ":"স্কোর: ") + (p1?p1.score:0);
+        else txt = `P1: ${p1?p1.score:0} | P2: ${p2?p2.score:0}`;
+        
+        document.getElementById('final-score').innerText = txt;
+        document.getElementById('gameover-modal').classList.remove('hidden');
+    }
+
+    restart() { this.start(); }
+    menu() {
+        document.getElementById('gameover-modal').classList.add('hidden');
+        document.getElementById('menu-modal').classList.remove('hidden');
+        document.getElementById('ui-layer').style.opacity = 0;
+        this.state = 'menu';
+    }
+
+    openSettings() { document.getElementById('settings-modal').classList.remove('hidden'); }
+    closeSettings() { document.getElementById('settings-modal').classList.add('hidden'); }
+    
+    toggleLang() {
+        this.lang = this.lang === 'en' ? 'bn' : 'en';
+        this.translateUI();
+        localStorage.setItem('snakeio_lang', this.lang);
+    }
+
+    translateUI() {
+        document.querySelectorAll('[data-t]').forEach(el => {
+            const k = el.getAttribute('data-t');
+            if(LOCALE[this.lang][k]) el.innerText = LOCALE[this.lang][k];
+        });
+        document.getElementById('btn-lang').innerText = this.lang === 'en' ? "🇺🇸 English" : "🇧🇩 বাংলা";
+    }
+
+    saveSettings() {
+        localStorage.setItem('snakeio_sets', JSON.stringify({
+            sound: this.config.sound, vibrate: this.config.vibrate, lang: this.lang
+        }));
+    }
+
+    loadSettings() {
+        const s = localStorage.getItem('snakeio_sets');
+        if(s) {
+            const p = JSON.parse(s);
+            this.config.sound = p.sound;
+            this.config.vibrate = p.vibrate;
+            this.lang = p.lang || 'en';
+            document.getElementById('opt-sound').checked = p.sound;
+            document.getElementById('opt-vibrate').checked = p.vibrate;
+            this.audio.enabled = p.sound;
+            this.translateUI();
+        }
+    }
+}
+
+window.onload = () => { window.game = new Game(); };
+</script>
+</body>
+</html>
