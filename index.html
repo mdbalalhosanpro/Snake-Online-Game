@@ -3,7 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Snake.io Mobile Fixed</title>
+<title>Snaky - Offline Game</title>
+
+<!-- PWA Meta Tags -->
+<meta name="theme-color" content="#101010">
+<meta name="description" content="Snaky - Smooth IO Game with Offline Support">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
 <style>
     :root {
         --primary: #00e676;
@@ -14,15 +23,13 @@
         --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
 
-    /* Base reset with touch-action none to prevent scroll on canvas, 
-       but we override this for interactive elements below */
-    * { box-sizing: border-box; touch-action: none; user-select: none; -webkit-user-select: none; }
+    * { box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
     
     body, html {
         margin: 0; padding: 0; width: 100%; height: 100%;
         background: var(--bg); overflow: hidden;
         font-family: var(--font); color: var(--text);
-        cursor: crosshair;
+        touch-action: none; /* Prevents zooming/scrolling on game area */
     }
 
     /* Game Layer */
@@ -34,6 +41,7 @@
         position: absolute; top: 0; left: 0; width: 100%; height: 100%;
         pointer-events: none; display: flex; flex-direction: column;
         justify-content: space-between; padding: 10px;
+        z-index: 10;
     }
 
     /* HUD */
@@ -64,18 +72,13 @@
     h1 { margin: 0 0 20px 0; color: var(--primary); text-transform: uppercase; letter-spacing: 3px; font-size: 28px; }
     h2 { margin: 10px 0; font-size: 20px; }
 
-    /* Critical: Allow standard touch interaction on buttons/inputs */
-    button, input, select, .toggle {
-        touch-action: manipulation; 
-        pointer-events: auto;
-    }
-
     button {
         background: var(--primary); color: #000; border: none;
-        padding: 12px 30px; font-size: 18px; font-weight: bold;
+        padding: 15px 30px; font-size: 18px; font-weight: bold; /* Increased padding for touch */
         border-radius: 30px; cursor: pointer; margin: 10px;
         transition: transform 0.1s, background 0.2s;
         min-width: 120px;
+        touch-action: manipulation;
     }
     button:active { transform: scale(0.95); }
     button:hover { background: #69f0ae; }
@@ -88,6 +91,8 @@
         padding-bottom: 10px;
     }
     
+    select, input[type="range"] { pointer-events: auto; touch-action: pan-y; }
+
     /* Toggle Switch */
     .toggle { position: relative; display: inline-block; width: 50px; height: 24px; }
     .toggle input { opacity: 0; width: 0; height: 0; }
@@ -102,7 +107,7 @@
     input:checked + .slider { background-color: var(--primary); }
     input:checked + .slider:before { transform: translateX(26px); }
 
-    .lang-toggle { font-size: 24px; cursor: pointer; padding: 5px; display: inline-block; margin-bottom: 15px; touch-action: manipulation; }
+    .lang-toggle { font-size: 24px; cursor: pointer; padding: 10px; display: inline-block; margin-bottom: 15px; }
     
     /* Control Hint Overlay for 2P */
     .split-line {
@@ -117,6 +122,7 @@
 <div id="game-container">
     <canvas id="gameCanvas"></canvas>
     
+    <!-- Visual Divider for 2 Player Mode -->
     <div id="split-line" class="split-line"></div>
 
     <!-- UI Overlay -->
@@ -133,7 +139,7 @@
     <!-- Main Menu Modal -->
     <div id="menu-modal" class="modal">
         <div class="panel">
-            <h1>Snake.IO</h1>
+            <h1>SNAKY</h1>
             <div onclick="game.toggleLang()" class="lang-toggle" id="btn-lang">🇺🇸 / 🇧🇩</div>
             
             <div class="setting-row">
@@ -188,7 +194,7 @@
 
             <button class="secondary" onclick="game.closeSettings()" data-t="back">BACK</button>
             <p style="font-size:12px; opacity:0.7; margin-top:20px;" data-t="controls">
-                Controls: Move Mouse or Touch Screen to steer.
+                Controls: Mouse/Touch to steer.
             </p>
         </div>
     </div>
@@ -255,31 +261,28 @@ class AudioManager {
 }
 
 /**
- * Input Handler (Mouse & Touch Follower)
- * Updated to properly handle UI clicks on Mobile
+ * Input Handler (Mobile Touch Fixed)
  */
 class InputHandler {
     constructor() {
         this.p1Angle = null; 
         this.p2Angle = null;
+        this.touchActive = false;
+        
         this.keys = {};
-
-        // Keyboard
         window.addEventListener('keydown', e => this.keys[e.code] = true);
         window.addEventListener('keyup', e => this.keys[e.code] = false);
 
-        // Mouse (PC)
         window.addEventListener('mousemove', e => {
-            this.handleMouse(e.clientX, e.clientY);
+            if(!this.touchActive) this.handleMouse(e.clientX, e.clientY);
         });
 
-        // Touch (Mobile)
+        // Touch Listeners
         const container = document.getElementById('game-container');
-        // We attach listeners to the container to handle full screen game control
-        // PASSIVE: FALSE is crucial to allow preventDefault (for preventing scroll)
-        container.addEventListener('touchstart', e => this.handleTouch(e), {passive: false});
-        container.addEventListener('touchmove', e => this.handleTouch(e), {passive: false});
-        container.addEventListener('touchend', e => this.handleTouch(e), {passive: false});
+        // We use passive: false to allow preventDefault, but we conditionally call it
+        container.addEventListener('touchstart', e => this.handleTouch(e, true), {passive: false});
+        container.addEventListener('touchmove', e => this.handleTouch(e, false), {passive: false});
+        container.addEventListener('touchend', e => this.handleTouchEnd(e), {passive: false});
     }
 
     handleMouse(mx, my) {
@@ -288,42 +291,47 @@ class InputHandler {
         this.p1Angle = Math.atan2(my - cy, mx - cx);
     }
 
-    handleTouch(e) {
-        // --- MOBILE UI FIX ---
-        // If the user touches a button, input, select, or inside a panel/modal,
-        // we must NOT preventDefault(). If we do, the 'click' event never fires.
-        if (e.target.tagName === 'BUTTON' || 
-            e.target.tagName === 'INPUT' || 
-            e.target.tagName === 'SELECT' || 
-            e.target.closest('.panel')) {
-            // Return early to let the browser handle the UI click naturally
-            // This ensures buttons like "PLAY" or "RESTART" work.
-            return;
+    handleTouch(e, isStart) {
+        this.touchActive = true;
+        
+        // Critical Fix: If touching a button, input or select, do NOT prevent default.
+        // This allows clicks to pass through to the UI elements.
+        const tag = e.target.tagName;
+        if (tag === 'BUTTON' || tag === 'INPUT' || tag === 'SELECT' || tag === 'LABEL' || e.target.classList.contains('lang-toggle')) {
+            return; 
         }
 
-        // Only prevent scrolling if we are strictly interacting with the game canvas
-        if(e.cancelable) e.preventDefault();
+        // If touching game area, prevent scrolling
+        e.preventDefault();
 
-        // Game Steering Logic
         const mode = parseInt(document.getElementById('game-mode').value);
         const w = window.innerWidth;
-        const h = window.innerHeight;
         const cx = w / 2;
-        const cy = h / 2;
+        const cy = window.innerHeight / 2;
 
         for (let i = 0; i < e.touches.length; i++) {
             const t = e.touches[i];
+            
             if (mode === 1) {
-                // 1 Player: steer relative to screen center
+                // 1 Player: Any touch steers P1
                 this.p1Angle = Math.atan2(t.clientY - cy, t.clientX - cx);
             } else {
-                // 2 Players: split screen
+                // 2 Player: Split screen
                 if (t.clientX < w / 2) {
-                    this.p1Angle = Math.atan2(t.clientY - cy, t.clientX - (w/4));
+                    const leftCx = w / 4;
+                    this.p1Angle = Math.atan2(t.clientY - cy, t.clientX - leftCx);
                 } else {
-                    this.p2Angle = Math.atan2(t.clientY - cy, t.clientX - ((w*3)/4));
+                    const rightCx = (w * 3) / 4;
+                    this.p2Angle = Math.atan2(t.clientY - cy, t.clientX - rightCx);
                 }
             }
+        }
+    }
+
+    handleTouchEnd(e) {
+        // We generally don't reset angle on touch end to keep smooth steering
+        if(e.touches.length === 0) {
+            // Optional: reset logic if needed
         }
     }
 
@@ -336,6 +344,7 @@ class InputHandler {
         if (this.keys['ArrowDown'] || this.keys['KeyS']) dy = 1;
         if (this.keys['ArrowLeft'] || this.keys['KeyA']) dx = -1;
         if (this.keys['ArrowRight'] || this.keys['KeyD']) dx = 1;
+        
         if (dx !== 0 || dy !== 0) return Math.atan2(dy, dx);
         return null; 
     }
@@ -366,39 +375,39 @@ class Snake {
     update(dt, worldW, worldH, foodList, snakeList, input, diff) {
         if (this.dead) return;
 
-        // Steering
         let targetAngle = this.angle;
 
         if (!this.isBot) {
             let inputAngle = null;
             if (this.id === 'p1') inputAngle = input.getP1Angle();
             else if (this.id === 'p2') inputAngle = input.getP2Angle();
+
             if (inputAngle !== null) targetAngle = inputAngle;
         } else {
             targetAngle = this.runAI(foodList, snakeList, worldW, worldH, diff);
         }
 
-        // Smooth Turn
         let diffAngle = targetAngle - this.angle;
         while (diffAngle <= -Math.PI) diffAngle += Math.PI * 2;
         while (diffAngle > Math.PI) diffAngle -= Math.PI * 2;
-        this.angle += diffAngle * 0.12;
+        
+        const turnSpeed = 0.12;
+        this.angle += diffAngle * turnSpeed;
 
-        // Move
         this.x += Math.cos(this.angle) * this.speed;
         this.y += Math.sin(this.angle) * this.speed;
 
-        // Die on Boundary
         if (this.x < 0 || this.x > worldW || this.y < 0 || this.y > worldH) {
             this.dead = true;
         }
 
-        // Body Path
         this.path.unshift({x: this.x, y: this.y});
-        const targetLen = 20 + (this.score * 4);
-        while (this.path.length > targetLen) this.path.pop();
         
-        // Growth limit
+        const targetLen = 20 + (this.score * 4);
+        while (this.path.length > targetLen) {
+            this.path.pop();
+        }
+        
         this.radius = 12 + Math.sqrt(this.score) * 0.5;
         if(this.radius > 40) this.radius = 40;
     }
@@ -408,10 +417,9 @@ class Snake {
         let tx = Math.cos(this.angle) * 50; 
         let ty = Math.sin(this.angle) * 50;
 
-        // Food
         let bestFood = null;
         let minDist = Infinity;
-        for(let i=0; i<30; i++) {
+        for(let i=0; i<30; i++) { 
             const f = foods[Math.floor(Math.random() * foods.length)];
             if(!f) continue;
             const d = Math.hypot(f.x - this.x, f.y - this.y);
@@ -422,14 +430,12 @@ class Snake {
             ty = bestFood.y - this.y;
         }
 
-        // Wall Avoid
         const wallDist = 100;
         if(this.x < wallDist) tx += 200;
         if(this.x > w - wallDist) tx -= 200;
         if(this.y < wallDist) ty += 200;
         if(this.y > h - wallDist) ty -= 200;
 
-        // Snake Avoid
         if(diff !== 'easy') {
             snakes.forEach(s => {
                 if(s === this || s.dead) return;
@@ -470,11 +476,9 @@ class Snake {
         ctx.stroke();
         ctx.shadowBlur = 0;
 
-        // Head
         const headX = this.x;
         const headY = this.y;
 
-        // Eyes
         ctx.fillStyle = '#fff';
         const eyeOffX = Math.cos(this.angle - 0.7) * (this.radius * 0.6);
         const eyeOffY = Math.sin(this.angle - 0.7) * (this.radius * 0.6);
@@ -485,9 +489,8 @@ class Snake {
         ctx.beginPath(); ctx.arc(headX + eyeOffX, headY + eyeOffY, eyeSize, 0, Math.PI*2); ctx.fill();
         ctx.beginPath(); ctx.arc(headX + eyeOffX2, headY + eyeOffY2, eyeSize, 0, Math.PI*2); ctx.fill();
 
-        // Pupils
         ctx.fillStyle = '#000';
-        const pLook = 2;
+        const pLook = 2; 
         ctx.beginPath(); 
         ctx.arc(headX + eyeOffX + Math.cos(this.angle)*pLook, headY + eyeOffY + Math.sin(this.angle)*pLook, eyeSize/2, 0, Math.PI*2); 
         ctx.fill();
@@ -495,7 +498,6 @@ class Snake {
         ctx.arc(headX + eyeOffX2 + Math.cos(this.angle)*pLook, headY + eyeOffY2 + Math.sin(this.angle)*pLook, eyeSize/2, 0, Math.PI*2); 
         ctx.fill();
 
-        // Name
         ctx.fillStyle = '#fff';
         ctx.font = 'bold 12px sans-serif';
         ctx.textAlign = 'center';
@@ -555,7 +557,6 @@ class Game {
         this.resize();
         window.addEventListener('resize', () => this.resize());
 
-        // Setup Options UI
         document.getElementById('opt-sound').addEventListener('change', (e) => {
             this.config.sound = e.target.checked;
             this.audio.enabled = this.config.sound;
@@ -573,7 +574,7 @@ class Game {
     resize() {
         this.W = window.innerWidth;
         this.H = window.innerHeight;
-        this.canvas.width = this.W;
+        this.canvas.width = this.W; 
         this.canvas.height = this.H;
     }
 
@@ -583,11 +584,9 @@ class Game {
         this.config.diff = document.getElementById('bot-diff').value;
         this.audio.playClick();
         
-        // Reset
         this.snakes = [];
         this.foods = [];
         
-        // Add Players
         this.snakes.push(new Snake('p1', this.worldW/2, this.worldH/2, '#00e676', false, "YOU"));
         
         const splitLine = document.getElementById('split-line');
@@ -602,10 +601,7 @@ class Game {
             scoreP2.style.display = 'none';
         }
 
-        // Add Bots
         for(let i=0; i<this.config.bots; i++) this.spawnBot();
-
-        // Add Food
         for(let i=0; i<400; i++) this.foods.push(new Food(this.worldW, this.worldH));
 
         document.getElementById('menu-modal').classList.add('hidden');
@@ -627,7 +623,6 @@ class Game {
 
         this.snakes.forEach(s => s.update(dt, this.worldW, this.worldH, this.foods, this.snakes, this.input, this.config.diff));
 
-        // Collisions: Snake vs Food
         this.snakes.forEach(s => {
             if(s.dead) return;
             for(let i = this.foods.length-1; i>=0; i--) {
@@ -647,7 +642,6 @@ class Game {
             }
         });
 
-        // Collisions: Snake vs Snake
         for (let i = 0; i < this.snakes.length; i++) {
             let s1 = this.snakes[i];
             if (s1.dead) continue;
@@ -673,7 +667,6 @@ class Game {
             }
         }
 
-        // Check End Game
         const p1 = this.snakes.find(s => s.id === 'p1');
         const p2 = this.snakes.find(s => s.id === 'p2');
         
@@ -725,6 +718,7 @@ class Game {
              let targets = [];
              if(p1 && !p1.dead) targets.push(p1);
              if(p2 && !p2.dead) targets.push(p2);
+             
              if(targets.length > 0) {
                  camX = targets.reduce((sum, t) => sum + t.x, 0) / targets.length;
                  camY = targets.reduce((sum, t) => sum + t.y, 0) / targets.length;
@@ -735,7 +729,6 @@ class Game {
         const ty = this.H/2 - camY;
         this.ctx.translate(tx, ty);
 
-        // GRID
         this.ctx.strokeStyle = '#1a1a1a';
         this.ctx.lineWidth = 2;
         this.ctx.beginPath();
@@ -842,6 +835,15 @@ class Game {
             this.translateUI();
         }
     }
+}
+
+// PWA Service Worker Registration
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./service-worker.js')
+            .then(reg => console.log('SW Registered!', reg))
+            .catch(err => console.log('SW Failed!', err));
+    });
 }
 
 window.onload = () => { window.game = new Game(); };
